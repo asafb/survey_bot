@@ -1,0 +1,19 @@
+# Ignore environment variables file
+.env
+
+# Ignore log files
+*.log
+responses.log
+
+# Ignore Python cache files and compiled files
+__pycache__/
+*.pyc
+*.cpython-*.pyc
+
+# Ignore common OS-specific files (optional but good practice)
+.DS_Store
+Thumbs.db
+
+# Ignore common editor-specific files (optional but good practice)
+.vscode/
+.idea/
