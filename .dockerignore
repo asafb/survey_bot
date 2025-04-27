@@ -1,0 +1,35 @@
+# .dockerignore
+
+# Git specific
+.git
+.gitignore
+.gitattributes
+
+# Environment files
+.env*
+*.env
+
+# Virtual environment
+env/
+venv/
+*.venv
+
+# Python cache / compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# IDE / Editor specific files
+.idea/
+.vscode/
+
+# Log files
+*.log
+
+# Docker specific
+Dockerfile
+.dockerignore
