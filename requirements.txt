@@ -2,9 +2,12 @@ fastapi
 uvicorn[standard]
 google-generativeai
 pydantic
+python-dotenv
+google-api-core
 gunicorn
 google-cloud-firestore
-
+Jinja2
+python-multipart
 
 
 

@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chatbot - Step 3</title>
+    <link rel="stylesheet" href="/static/style.css">
+     <style>
+        /* Minor style tweaks for embedded view */
+        body { margin: 0; padding: 0; background-color: #ffffff; font-family: sans-serif;}
+        .chat-container { margin: 0; max-width: 100%; height: 98vh; border-radius: 0; box-shadow: none; border: 1px solid #ccc; display: flex; flex-direction: column; }
+        .chat-header { background-color: #444; color: white; padding: 10px; flex-shrink: 0;}
+        .chat-log { background-color: #f8f9fa; padding: 10px; flex-grow: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;} /* Added gap */
+        .input-container { background: #f0f2f5; border-top: 1px solid #ccc; padding: 8px 12px; display: flex; flex-shrink: 0;}
+        .chat-input { flex-grow: 1; margin-right: 10px; padding: 8px; border: 1px solid #ccc; border-radius: 4px;}
+        .send-button { padding: 8px 15px; cursor: pointer;}
+        /* Simple message styling */
+        .message { padding: 8px 12px; border-radius: 15px; max-width: 80%; word-wrap: break-word; line-height: 1.4;}
+        .user-message { background-color: #dcf8c6; align-self: flex-end; margin-left: auto; border-radius: 15px 15px 4px 15px;}
+        .bot-message { background-color: #eee; align-self: flex-start; border-radius: 4px 15px 15px 15px;}
+         /* Hide internal scrollbar on main input */
+         #chatInput { scrollbar-width: none; -ms-overflow-style: none; }
+         #chatInput::-webkit-scrollbar { display: none; }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-header">
+            Survey Bot Demo
+        </div>
+        <div id="chatLog" class="chat-log">
+            {% for msg_item in history %}
+                {% if msg_item.role == 'user' %}
+                    <div class="message user-message">{{ msg_item.parts[0] }}</div>
+                {% elif msg_item.role == 'model' %}
+                    <div class="message bot-message">{{ msg_item.parts[0] }}</div>
+                {% endif %}
+            {% endfor %}
+        </div>
+
+        <form id="chatForm" method="post" action="/">
+            <div class="input-container">
+                <input type="hidden" name="session_id" value="{{ session_id }}">
+                <textarea
+                    id="chatInput"
+                    name="prompt"
+                    class="chat-input"
+                    placeholder="Type something..."
+                    rows="1"
+                    aria-label="Chat message input"
+                    required
+                    autofocus
+                ></textarea>
+                <button class="send-button" type="submit" aria-label="Send message">
+                    Send
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        const chatLog = document.getElementById("chatLog");
+        const chatInput = document.getElementById("chatInput");
+        const chatForm = document.getElementById('chatForm');
+        const sendButton = chatForm?.querySelector('button');
+
+        if (chatLog) {
+            chatLog.scrollTop = chatLog.scrollHeight;
+        }
+
+        function autoResizeTextarea(element) {
+            if (!element) return;
+            element.style.height = 'auto';
+            const newHeight = Math.min(150, Math.max(38, element.scrollHeight));
+            element.style.height = newHeight + 'px';
+        }
+
+        if (chatInput) {
+            chatInput.focus();
+            chatInput.addEventListener('input', () => autoResizeTextarea(chatInput));
+            autoResizeTextarea(chatInput);
+
+             chatInput.addEventListener('keydown', (event) => {
+                 if (event.key === "Enter" && !event.shiftKey) {
+                     event.preventDefault();
+                     if (chatForm && sendButton && !sendButton.disabled && chatInput.value.trim() !== "") {
+                         chatForm.submit();
+                     }
+                 }
+             });
+        }
+
+         if (chatForm) {
+            chatForm.addEventListener('submit', (event) => {
+                if (chatInput && chatInput.value.trim() === "") {
+                    event.preventDefault();
+                    alert("Please enter a message.");
+                    chatInput.focus();
+                } else if (sendButton) {
+                }
+            });
+        }
+    </script>
+</body>
+</html>
