@@ -12,6 +12,7 @@ import google.api_core.exceptions
 import re
 import time
 import json # Needed for postMessage data
+from fastapi.middleware.cors import CORSMiddleware
 
 # Firestore imports
 from google.cloud import firestore
@@ -30,7 +31,7 @@ try:
         raise ValueError("GEMINI_API_KEY not found in environment variables.")
     genai.configure(api_key=api_key)
     # Use Flash for speed/cost with large context window
-    model_name = 'gemini-1.5-flash-latest'
+    model_name = "gemini-2.5-flash-preview-04-17"
     # Base model instance - system prompt applied per-call now
     logger.info(f"Gemini base model configured: '{model_name}'.")
     generation_config = genai.types.GenerationConfig(
@@ -365,4 +366,12 @@ if not os.path.isdir(static_dir):
      logger.warning(f"Static dir not found: {static_dir}. Creating.")
      os.makedirs(static_dir, exist_ok=True)
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://*.qualtrics.com"],  # Add your specific Qualtrics domain
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
