@@ -66,7 +66,6 @@
                     rows="1"
                     aria-label="Chat message input"
                     required
-                    autofocus
                 ></textarea>
                 <button class="send-button" type="submit" aria-label="Send message">
                     Send
@@ -107,55 +106,113 @@
              });
         }
 
-        // Add this new code to handle communication with Qualtrics
-        function sendDataToQualtrics(data) {
-            // Send message to parent window (Qualtrics)
-            window.parent.postMessage({
-                type: 'chatbot_data',
-                data: JSON.stringify(data)
-            }, '*'); // '*' allows any parent domain - you might want to restrict this
+        // Function to send data to Qualtrics
+        function sendDataToQualtrics(dataObject) { // Renamed parameter for clarity
+            const jsonString = JSON.stringify(dataObject);
+            console.log("[IFRAME] Attempting to send data to Qualtrics. Object:", dataObject);
+            console.log("[IFRAME] JSON String being sent:", jsonString); // Log the actual string
+
+            if (window.parent && window.parent.postMessage) {
+                window.parent.postMessage({
+                    type: 'chatbot_data',
+                    data: jsonString // Send the stringified data
+                }, '*'); // In production, replace '*' with your Qualtrics instance origin
+                console.log("[IFRAME] postMessage sent.");
+            } else {
+                console.error("[IFRAME] Cannot access window.parent.postMessage. Is it in an iframe?");
+            }
         }
 
-        // Modify your form submission handler to include data sending
-        if (chatForm) {
-            chatForm.addEventListener('submit', (event) => {
-                if (chatInput && chatInput.value.trim() === "") {
-                    event.preventDefault();
-                    alert("Please enter a message.");
-                    chatInput.focus();
-                } else if (sendButton) {
-                    // Get the current chat history
-                    const chatMessages = Array.from(chatLog.querySelectorAll('.message')).map(msg => ({
-                        role: msg.classList.contains('user-message') ? 'user' : 'model',
-                        text: msg.textContent
-                    }));
-                    
-                    // Send the data to Qualtrics
-                    sendDataToQualtrics({
-                        session_id: document.querySelector('input[name="session_id"]').value,
-                        history: chatMessages
-                    });
-                }
-            });
-        }
-
-        // Listen for messages from Qualtrics
+        // --- Single listener for messages from parent (Qualtrics) ---
         window.addEventListener('message', function(event) {
-            // Verify the sender if needed
-            // if (event.origin !== "https://your-qualtrics-domain.com") return;
-            
-            if (event.data.type === 'get_chat_data') {
-                const chatMessages = Array.from(chatLog.querySelectorAll('.message')).map(msg => ({
-                    role: msg.classList.contains('user-message') ? 'user' : 'model',
-                    text: msg.textContent
-                }));
-                
-                sendDataToQualtrics({
-                    session_id: document.querySelector('input[name="session_id"]').value,
-                    history: chatMessages
-                });
+            // console.log("[IFRAME] Message received from parent:", event.data); // Basic log
+
+            // It's good practice to check the origin in production
+            // const expectedOrigin = "https://yourqualtricsinstance.qualtrics.com";
+            // if (event.origin !== expectedOrigin) {
+            //     console.warn(`[IFRAME] Message from unexpected origin: ${event.origin}. Expected: ${expectedOrigin}`);
+            //     return;
+            // }
+
+            if (event.data && event.data.type) {
+                console.log(`[IFRAME] Message type: ${event.data.type} received from parent. Full data:`, event.data);
+                switch (event.data.type) {
+                    case 'get_chat_data':
+                        const currentMessages = Array.from(chatLog.querySelectorAll('.message')).map(msg => ({
+                            role: msg.classList.contains('user-message') ? 'user' : 'model',
+                            text: msg.textContent.trim()
+                        }));
+                        sendDataToQualtrics({
+                            session_id: document.querySelector('input[name="session_id"]').value,
+                            history: currentMessages
+                        });
+                        break;
+                    case 'init_chatbot':
+                        chatbotConfig = event.data.config;
+                        console.log("[IFRAME] Chatbot configured:", chatbotConfig);
+                        if (chatbotConfig && chatbotConfig.uiConfig) {
+                            if (document.querySelector('.chat-header')) {
+                                document.querySelector('.chat-header').textContent = chatbotConfig.uiConfig.headerText || "Survey Bot Demo";
+                            }
+                            if (document.querySelector('#chatInput')) {
+                                document.querySelector('#chatInput').placeholder = chatbotConfig.uiConfig.inputPlaceholder || "Type something...";
+                            }
+                        }
+                        // Send config to your Python backend if needed (ensure /config endpoint exists)
+                        fetch('/config', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(chatbotConfig)
+                        })
+                        .then(response => console.log("[IFRAME] Config sent to server, status:", response.status))
+                        .catch(error => console.error("[IFRAME] Error sending config to server:", error));
+                        break;
+                    default:
+                        console.log("[IFRAME] Received unhandled message type from parent:", event.data.type);
+                }
+            } else {
+                console.warn("[IFRAME] Received message from parent without data.type property:", event);
             }
         });
+        
+        // Modified form submission handler
+        if (chatForm) {
+            chatForm.addEventListener('submit', (event) => {
+                // For a traditional form submission that reloads the page,
+                // event.preventDefault() is not strictly needed here unless you want to stop it for AJAX.
+                // However, the data sending should ideally happen *after* the server responds and updates history.
+                // The current approach sends data *before* the server processes the new prompt.
+
+                if (chatInput && chatInput.value.trim() === "") {
+                    event.preventDefault(); // Prevent empty submission
+                    alert("Please enter a message.");
+                    chatInput.focus();
+                    return; // Stop further processing for empty input
+                }
+                
+                console.log("[IFRAME] Form submitted. Gathering data to send to Qualtrics.");
+                // This captures the state of the DOM *before* the current input is processed by the backend and added to history by Jinja.
+                const chatMessagesForSubmit = Array.from(chatLog.querySelectorAll('.message')).map(msg => ({
+                    role: msg.classList.contains('user-message') ? 'user' : 'model',
+                    text: msg.textContent.trim()
+                }));
+
+                // To include the *current* user's input before it's officially in the history from the server:
+                // const currentUserPrompt = chatInput.value.trim();
+                // if (currentUserPrompt) {
+                //    chatMessagesForSubmit.push({ role: 'user', text: currentUserPrompt });
+                // }
+                // Be cautious with this, as the page will reload and Jinja will render the history from the server,
+                // potentially leading to duplication if not handled carefully.
+
+                sendDataToQualtrics({
+                    session_id: document.querySelector('input[name="session_id"]').value,
+                    history: chatMessagesForSubmit
+                });
+
+                // The form will now submit to your Python backend as normal.
+            });
+        }
     </script>
 </body>
 </html>

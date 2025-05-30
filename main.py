@@ -6,13 +6,14 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.concurrency import run_in_threadpool # Needed for LLM call
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel # Keep for potential future use
+from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 import google.api_core.exceptions
 import re
 import time
 import json # Needed for postMessage data
 from fastapi.middleware.cors import CORSMiddleware
+from typing import List, Optional, Dict
 
 # Firestore imports
 from google.cloud import firestore
@@ -158,23 +159,68 @@ async def generate_llm_response(system_prompt: str, history: list) -> str:
 # --- System Prompt Definition ---
 INITIAL_SURVEY_QUESTION = "What are your main pain points with this product?" # Example
 
-SYSTEM_PROMPT = f"""You are 'XUX', a helpful and insightful qualitative research assistant conducting a brief follow-up interview. The user is responding to the initial question: '{INITIAL_SURVEY_QUESTION}'.
+# --- Define your Pydantic models for the config ---
+# (You might have these already from previous suggestions, ensure they match what JS sends)
+class PromptParams(BaseModel):
+    maxFollowUps: int = 10
+    focusAreas: List[str] = Field(default_factory=list)
+    avoidTopics: List[str] = Field(default_factory=list)
+    tone: str = "professional"
+    depth: str = "moderate"
 
-Your primary goal is to understand the user's perspective more deeply by asking clarifying, open-ended follow-up questions based on their previous responses in the conversation history provided.
+class UiConfig(BaseModel):
+    headerText: str = "Survey Bot Demo"
+    inputPlaceholder: str = "Type something..."
+    botName: str = "Research Assistant" # Example, if you use it
 
-CONVERSATION RULES:
-1.  Analyze History: Carefully read the entire conversation history below.
-2.  Ask ONE Follow-up: Generate exactly ONE concise, natural-sounding, open-ended follow-up question that probes deeper into an interesting, unclear, or newly mentioned point in the *user's latest response*.
-3.  Stay focused on making sure that you ask a follow up question about every topic the user first lists. Don't go too deep into new issues until address the first ones. If someone's response is short, vague or not information in one area. Check to see if there other topics you didn't address and ask questions about that.
-4.  Avoid Redundancy: Do NOT ask about something the user has already clearly explained or that you have already asked about in the history. Check the history thoroughly.
-5.  Stay Focused: Keep questions relevant to the initial survey question and the user's answers about their pain points or experience. If the user goes off-topic, gently guide them back.
-6.  Be Concise: Keep your questions short. Do not add introductory phrases like "Okay, tell me more about..." or "Thanks for sharing...". Just ask the question.
-7.  If the user starts with multiple points, return to those points with follow up questions without getting too deep into new topics and before ending the interaction or going too deep into new topics. 
-8.  Forbidden Questions: Do NOT ask for personal information, solutions, feelings/emotions, willingness to pay, or numerical ratings. Do NOT ask "yes/no" questions or questions starting with "Do you...", "Have you...", "Did you...", "Is there...", "Are there...", "Was there...", "Were there...". Focus on 'What', 'How', 'Why', 'Tell me more about...' style questions related to their statement.
-9.  Make sure you return to the first issues the user mentioned before going too deep into any new issues. Circle back before getting too deep into new areas past the first question. 
-10.  Know When to Stop: After about 10 relevant follow-up questions that address the top issues they first mentioned have been asked and answered end the interaction. If you're getting short or non-descriptive answers on a topic, move on until you've addressed all the main topics that user has brought up"
+class ChatbotConfig(BaseModel):
+    initialQuestion: str = "What are your main pain points with this product?"
+    promptParams: PromptParams = Field(default_factory=PromptParams)
+    uiConfig: UiConfig = Field(default_factory=UiConfig)
 
-Respond ONLY with the single follow-up question OR the exact concluding phrase "Thank you, that's helpful feedback on those points.".
+# --- Store the configuration (globally or per session) ---
+# For simplicity, let's use a global variable for now.
+# In a production system, you'd likely store this per session_id in Firestore
+# alongside the conversation history if it can vary per respondent.
+# This will hold the latest config received from ANY Qualtrics iframe instance.
+# If multiple users are taking the survey simultaneously with different configs,
+# this simple global approach will lead to them overwriting each other's configs
+# for the Python backend. A session-based approach is more robust for multiple users.
+current_chatbot_config: ChatbotConfig = ChatbotConfig() # Initialize with default
+
+# --- Add the new /config endpoint ---
+@app.post("/config")
+async def receive_config(config: ChatbotConfig):
+    global current_chatbot_config
+    current_chatbot_config = config
+    logger.info(f"Received new chatbot configuration: {config.model_dump_json(indent=2)}")
+    # You might want to save this config to Firestore associated with a session_id
+    # if the config can change per user/session initiated from Qualtrics.
+    # For now, just updating a global one.
+    return {"message": "Configuration received successfully."}
+
+def generate_system_prompt(config: ChatbotConfig) -> str:
+    return f"""You are a helpful and insightful qualitative research assistant conducting a brief follow-up interview. 
+    The user is responding to the initial question: '{config.initialQuestion}'.
+
+    CONVERSATION RULES:
+1. Analyze History: Carefully read the entire conversation history below.
+2. If the user brings up these areas, put particular focus on them: {', '.join(config.promptParams.focusAreas) if config.promptParams.focusAreas else 'N/A'}
+3. Avoid these topics: {', '.join(config.promptParams.avoidTopics) if config.promptParams.avoidTopics else 'N/A'}
+4. Maintain a {config.promptParams.tone} tone
+5. Explore topics to a {config.promptParams.depth} depth
+6. Ask at most {config.promptParams.maxFollowUps} concise, natural sounding follow-up question(s)
+7. The follow up question should probe deeper into an interesting, unclear, or newly mentioned point 
+in the *user's latest response*.
+8.  Stay focused on making sure that you ask a follow up question about every topic the user first lists. 
+Don't go too deep into new issues until address the first ones. If someone's response is short, vague or not information in one area. Check to see if there other topics you didn't address and ask questions about that.
+9.  Avoid Redundancy: Do NOT ask about something the user has already clearly explained or that you have already asked about in the history. Check the history thoroughly.
+10.  Stay Focused: Keep questions relevant to the initial survey question and the user's answers. If the user goes off-topic, gently guide them back.
+11.  Be Concise: Keep your questions short. Do not add introductory phrases like "Okay, tell me more about..." or "Thanks for sharing...". Just ask the question.
+12.  If the user starts with multiple points, return to those points with follow up questions without getting too deep into new topics and before ending the interaction or going too deep into new topics. 
+13.  Forbidden Questions: Do NOT ask for personal information, solutions, feelings/emotions, willingness to pay, or numerical ratings. Do NOT ask "yes/no" questions or questions starting with "Do you...", "Have you...", "Did you...", "Is there...", "Are there...", "Was there...", "Were there...". Focus on 'What', 'How', 'Why', 'Tell me more about...' style questions related to their statement.
+14.  Make sure you return to the first issues the user mentioned before going too deep into any new issues. Circle back before getting too deep into new areas past the first question. 
+15. Know when to stop. If you get a string of really short, uninformative answers, or if people have answered max number of questions. Conclude with the exact phrase "Thank you, that's helpful feedback on those points"
 """
 
 # --- State Helper Functions ---
@@ -230,6 +276,13 @@ templates = Jinja2Templates(directory="templates")
 
 # --- Endpoints ---
 
+@app.post("/config")
+async def receive_config(config: ChatbotConfig):
+    global current_chatbot_config
+    current_chatbot_config = config
+    logger.info(f"Received new chatbot configuration: {config.model_dump_json(indent=2)}")
+    return {"message": "Configuration received successfully."}
+
 @app.get("/health", response_class=JSONResponse)
 async def health_check():
     """Simple health check endpoint."""
@@ -246,15 +299,17 @@ async def get_chat_page(request: Request, session_id: str | None = None):
         is_new_session = True
         logger.info(f"GET request: No session_id provided, generated new one: {session_id}")
         current_state = get_default_session_state()
+        # Use the initialQuestion from the globally (or session-specifically) stored config
+        effective_initial_question = current_chatbot_config.initialQuestion
         # Add initial prompt to history for new sessions
-        current_state["history"] = [{'role': 'model', 'parts': [INITIAL_SURVEY_QUESTION]}]
+        current_state["history"] = [{'role': 'model', 'parts': [effective_initial_question]}]
         save_session_state(session_id, current_state) # Save initial state
     else:
          logger.info(f"GET request for existing session {session_id}. Loading state.")
          current_state = load_session_state(session_id)
          if not current_state.get("history"):
-              logger.warning(f"Session {session_id}: Loaded state but history was empty. Adding initial question.")
-              current_state["history"] = [{'role': 'model', 'parts': [INITIAL_SURVEY_QUESTION]}]
+              logger.warning(f"Session {session_id}: Loaded state but history was empty. Adding initial question from config: '{current_chatbot_config.initialQuestion}'")
+              current_state["history"] = [{'role': 'model', 'parts': [current_chatbot_config.initialQuestion]}]
 
     conversation_history = current_state.get("history", [])
     conversation_active = True
@@ -262,7 +317,8 @@ async def get_chat_page(request: Request, session_id: str | None = None):
          conversation_active = False
 
     template_context = { "request": request, "session_id": session_id, "history": conversation_history,
-                         "conversation_active": conversation_active, "final_data_to_post": None }
+                         "conversation_active": conversation_active, "final_data_to_post": None,
+                         "ui_config": current_chatbot_config.uiConfig }
     logger.info(f"GET request for session {session_id}: Rendering template.")
     try:
         return templates.TemplateResponse("chat.html", template_context)
@@ -272,10 +328,18 @@ async def get_chat_page(request: Request, session_id: str | None = None):
 
 
 @app.post("/", response_class=HTMLResponse)
-async def post_chat_message(request: Request, session_id: str = Form(...), prompt: str = Form(...)):
+async def post_chat_message(
+    request: Request,
+    session_id: str = Form(...),
+    prompt: str = Form(...),
+    # config: Optional[ChatbotConfig] = None # Remove this, config will come from global/session
+):
     """Handles user form submission, calls LLM, updates state, and re-renders."""
     logger.info(f">>>>>>> POST / endpoint entered for session {session_id} <<<<<<<")
 
+    # Use the globally (or session-specifically) stored config
+    system_prompt = generate_system_prompt(current_chatbot_config) # Pass the whole config object
+    
     user_prompt = prompt.strip()
     logger.info(f"POST request for session {session_id}. User prompt: '{user_prompt[:100]}...'")
     bot_response_text = "Sorry, something went wrong processing your message." # Default
@@ -303,7 +367,7 @@ async def post_chat_message(request: Request, session_id: str = Form(...), promp
 
              # --- Call LLM --- <<<< MODIFIED PART >>>>
              logger.info(f"Session {session_id}: Calling LLM with history length {len(conversation_history)}...")
-             llm_response = await generate_llm_response(SYSTEM_PROMPT, conversation_history)
+             llm_response = await generate_llm_response(system_prompt, conversation_history)
              logger.info(f"Session {session_id}: LLM call completed.")
 
              if llm_response.startswith("ERROR_LLM"):
@@ -350,8 +414,8 @@ async def post_chat_message(request: Request, session_id: str = Form(...), promp
     # --- Render Template ---
     template_context = {
         "request": request, "session_id": session_id, "history": conversation_history,
-        "conversation_active": conversation_active, "final_data_to_post": final_data_to_post
-    }
+        "conversation_active": conversation_active, "final_data_to_post": final_data_to_post,
+        "ui_config": current_chatbot_config.uiConfig }
     logger.info(f"Session {session_id}: Rendering template. Active: {conversation_active}, History items: {len(conversation_history)}, Posting?: {final_data_to_post is not None}")
     try:
         return templates.TemplateResponse("chat.html", template_context)
@@ -369,7 +433,7 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://*.qualtrics.com"],  # Add your specific Qualtrics domain
+    allow_origins=["https://*.qualtrics.com"],  # Matches any Qualtrics subdomain
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
