@@ -38,6 +38,30 @@
          /* Hide internal scrollbar on main input */
          #chatInput { scrollbar-width: none; -ms-overflow-style: none; }
          #chatInput::-webkit-scrollbar { display: none; }
+        .message.thinking-message {
+            font-style: italic;
+            color: #777;
+            padding: 8px 12px; /* Consistent padding */
+            margin-bottom: 8px; /* Consistent margin */
+            border-radius: 15px; /* Consistent border-radius */
+            max-width: 80%;
+            align-self: flex-start; /* Align to left like model messages */
+            background-color: #f0f0f0; /* Similar to model messages */
+            word-wrap: break-word;
+            white-space: pre-wrap;
+        }
+        .message.error-message {
+            color: #D8000C; /* Error red */
+            background-color: #FFD2D2; /* Light red background */
+            border: 1px solid #D8000C;
+            padding: 8px 12px;
+            margin-bottom: 8px;
+            border-radius: 15px;
+            max-width: 80%;
+            align-self: flex-start;
+            word-wrap: break-word;
+            white-space: pre-wrap;
+        }
     </style>
 </head>
 <body>
@@ -55,7 +79,7 @@
             {% endfor %}
         </div>
 
-        <form id="chatForm" method="post" action="/">
+        <form id="chatForm" method="POST" action="/">
             <div class="input-container">
                 <input type="hidden" name="session_id" value="{{ session_id }}">
                 <textarea
@@ -74,145 +98,243 @@
         </form>
     </div>
 
-    <script>
-        const chatLog = document.getElementById("chatLog");
-        const chatInput = document.getElementById("chatInput");
-        const chatForm = document.getElementById('chatForm');
-        const sendButton = chatForm?.querySelector('button');
+<script>
+    // SCRIPT EXECUTION TRACKING
+    const SCRIPT_INSTANCE_ID = Date.now() + "_" + Math.random().toString(36).substring(2, 7);
+    console.log(`[IFRAME SCRIPT START - Instance ${SCRIPT_INSTANCE_ID}] Timestamp: ${new Date().toISOString()}`);
 
-        if (chatLog) {
-            chatLog.scrollTop = chatLog.scrollHeight;
-        }
+    // Global state for this iframe instance
+    let dynamicQualtricsOrigin = null;
+    let chatbotConfig = null;
+    let isChatbotInitialized = false; // Tracks if init_chatbot has been successfully processed for THIS instance
+    let currentSessionId = "{{ session_id }}"; // From Flask template
 
-        function autoResizeTextarea(element) {
-            if (!element) return;
-            element.style.height = 'auto';
-            const newHeight = Math.min(150, Math.max(38, element.scrollHeight));
-            element.style.height = newHeight + 'px';
-        }
+    console.log(`[IFRAME - Instance ${SCRIPT_INSTANCE_ID}] Initial state: dynamicQualtricsOrigin=${dynamicQualtricsOrigin}, isChatbotInitialized=${isChatbotInitialized}, currentSessionId=${currentSessionId}`);
 
-        if (chatInput) {
-            chatInput.focus();
-            chatInput.addEventListener('input', () => autoResizeTextarea(chatInput));
-            autoResizeTextarea(chatInput);
+    const chatLog = document.getElementById("chatLog");
+    const chatInput = document.getElementById("chatInput");
+    const chatForm = document.getElementById('chatForm');
+    const sendButton = chatForm?.querySelector('button');
 
-             chatInput.addEventListener('keydown', (event) => {
-                 if (event.key === "Enter" && !event.shiftKey) {
-                     event.preventDefault();
-                     if (chatForm && sendButton && !sendButton.disabled && chatInput.value.trim() !== "") {
-                         chatForm.submit();
-                     }
-                 }
-             });
-        }
+    if (chatLog) {
+        chatLog.scrollTop = chatLog.scrollHeight;
+    }
 
-        // Function to send data to Qualtrics
-        function sendDataToQualtrics(dataObject) { // Renamed parameter for clarity
-            const jsonString = JSON.stringify(dataObject);
-            console.log("[IFRAME] Attempting to send data to Qualtrics. Object:", dataObject);
-            console.log("[IFRAME] JSON String being sent:", jsonString); // Log the actual string
+    function autoResizeTextarea(element) {
+        if (!element) return;
+        element.style.height = 'auto';
+        const newHeight = Math.min(150, Math.max(38, element.scrollHeight)); // Max 150px, Min 38px (approx 1 row)
+        element.style.height = newHeight + 'px';
+    }
 
-            if (window.parent && window.parent.postMessage) {
-                window.parent.postMessage({
-                    type: 'chatbot_data',
-                    data: jsonString // Send the stringified data
-                }, '*'); // In production, replace '*' with your Qualtrics instance origin
-                console.log("[IFRAME] postMessage sent.");
-            } else {
-                console.error("[IFRAME] Cannot access window.parent.postMessage. Is it in an iframe?");
-            }
-        }
+    if (chatInput) {
+        chatInput.focus();
+        chatInput.addEventListener('input', () => autoResizeTextarea(chatInput));
+        autoResizeTextarea(chatInput); // Initial resize
 
-        // --- Single listener for messages from parent (Qualtrics) ---
-        window.addEventListener('message', function(event) {
-            // console.log("[IFRAME] Message received from parent:", event.data); // Basic log
-
-            // It's good practice to check the origin in production
-            // const expectedOrigin = "https://yourqualtricsinstance.qualtrics.com";
-            // if (event.origin !== expectedOrigin) {
-            //     console.warn(`[IFRAME] Message from unexpected origin: ${event.origin}. Expected: ${expectedOrigin}`);
-            //     return;
-            // }
-
-            if (event.data && event.data.type) {
-                console.log(`[IFRAME] Message type: ${event.data.type} received from parent. Full data:`, event.data);
-                switch (event.data.type) {
-                    case 'get_chat_data':
-                        const currentMessages = Array.from(chatLog.querySelectorAll('.message')).map(msg => ({
-                            role: msg.classList.contains('user-message') ? 'user' : 'model',
-                            text: msg.textContent.trim()
-                        }));
-                        sendDataToQualtrics({
-                            session_id: document.querySelector('input[name="session_id"]').value,
-                            history: currentMessages
-                        });
-                        break;
-                    case 'init_chatbot':
-                        chatbotConfig = event.data.config;
-                        console.log("[IFRAME] Chatbot configured:", chatbotConfig);
-                        if (chatbotConfig && chatbotConfig.uiConfig) {
-                            if (document.querySelector('.chat-header')) {
-                                document.querySelector('.chat-header').textContent = chatbotConfig.uiConfig.headerText || "Survey Bot Demo";
-                            }
-                            if (document.querySelector('#chatInput')) {
-                                document.querySelector('#chatInput').placeholder = chatbotConfig.uiConfig.inputPlaceholder || "Type something...";
-                            }
-                        }
-                        // Send config to your Python backend if needed (ensure /config endpoint exists)
-                        fetch('/config', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(chatbotConfig)
-                        })
-                        .then(response => console.log("[IFRAME] Config sent to server, status:", response.status))
-                        .catch(error => console.error("[IFRAME] Error sending config to server:", error));
-                        break;
-                    default:
-                        console.log("[IFRAME] Received unhandled message type from parent:", event.data.type);
+        chatInput.addEventListener('keydown', (event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                if (chatForm && sendButton && !sendButton.disabled && chatInput.value.trim() !== "") {
+                    // Do NOT disable button or input here, as it prevents form submission
+                    addMessageToChatLog(chatInput.value.trim(), 'user');
+                    addMessageToChatLog('...', 'thinking', 'thinkingIndicator'); 
+                    chatForm.submit();
                 }
-            } else {
-                console.warn("[IFRAME] Received message from parent without data.type property:", event);
             }
         });
-        
-        // Modified form submission handler
-        if (chatForm) {
-            chatForm.addEventListener('submit', (event) => {
-                // For a traditional form submission that reloads the page,
-                // event.preventDefault() is not strictly needed here unless you want to stop it for AJAX.
-                // However, the data sending should ideally happen *after* the server responds and updates history.
-                // The current approach sends data *before* the server processes the new prompt.
+    }
 
-                if (chatInput && chatInput.value.trim() === "") {
-                    event.preventDefault(); // Prevent empty submission
-                    alert("Please enter a message.");
-                    chatInput.focus();
-                    return; // Stop further processing for empty input
+    if (chatForm) {
+        chatForm.addEventListener('submit', function(e) {
+            // This event listener is primarily for when the form is submitted by means other than Enter key (e.g., clicking Send button)
+            // Do NOT disable button or input here, as it prevents form submission
+            if (chatInput) {
+                if (!chatInput.value.trim()) { // Prevent submission if input is empty on direct submit
+                    e.preventDefault();
+                    // Re-enable button if submit was prevented (though it shouldn't be disabled by this point)
+                    if (sendButton) sendButton.disabled = false;
+                    return;
                 }
-                
-                console.log("[IFRAME] Form submitted. Gathering data to send to Qualtrics.");
-                // This captures the state of the DOM *before* the current input is processed by the backend and added to history by Jinja.
-                const chatMessagesForSubmit = Array.from(chatLog.querySelectorAll('.message')).map(msg => ({
-                    role: msg.classList.contains('user-message') ? 'user' : 'model',
-                    text: msg.textContent.trim()
-                }));
+                // If user message wasn't added by Enter key handler (e.g. click on send button), add it now.
+                // Check if a message with this exact text already exists as the last user message.
+                const userMessages = chatLog.querySelectorAll('.user-message');
+                const lastUserMessage = userMessages.length > 0 ? userMessages[userMessages.length - 1] : null;
+                if (!lastUserMessage || lastUserMessage.textContent !== chatInput.value.trim()) {
+                    addMessageToChatLog(chatInput.value.trim(), 'user');
+                }
+                addMessageToChatLog('...', 'thinking', 'thinkingIndicator');
+            }
+        });
+    }
 
-                // To include the *current* user's input before it's officially in the history from the server:
-                // const currentUserPrompt = chatInput.value.trim();
-                // if (currentUserPrompt) {
-                //    chatMessagesForSubmit.push({ role: 'user', text: currentUserPrompt });
-                // }
-                // Be cautious with this, as the page will reload and Jinja will render the history from the server,
-                // potentially leading to duplication if not handled carefully.
+    // Helper function to add messages to the chat log
+    function addMessageToChatLog(text, role, id = null) {
+        if (!chatLog) return null;
 
-                sendDataToQualtrics({
-                    session_id: document.querySelector('input[name="session_id"]').value,
-                    history: chatMessagesForSubmit
-                });
-
-                // The form will now submit to your Python backend as normal.
-            });
+        const existingThinking = document.getElementById('thinkingIndicator');
+        if (existingThinking && role !== 'thinking') { // Don't remove if we are adding a new thinking msg
+            existingThinking.remove();
         }
-    </script>
+
+        const messageDiv = document.createElement('div');
+        messageDiv.classList.add('message');
+        messageDiv.textContent = text;
+        if (role === 'user') {
+             messageDiv.classList.add('user-message');
+             messageDiv.dataset.text = text; // Store original text for submit handler check
+        }
+        else if (role === 'model') messageDiv.classList.add('bot-message');
+        else if (role === 'thinking') messageDiv.classList.add('thinking-message');
+        else if (role === 'error') messageDiv.classList.add('error-message');
+        
+        if (id) messageDiv.id = id;
+
+        chatLog.appendChild(messageDiv);
+        chatLog.scrollTop = chatLog.scrollHeight;
+        return messageDiv;
+    }
+
+    // Function to send data to Qualtrics
+    function sendDataToQualtrics(dataObject) {
+        console.log(`%c[IFRAME - Instance ${SCRIPT_INSTANCE_ID}] sendDataToQualtrics CALLED. isChatbotInitialized: ${isChatbotInitialized}, dynamicQualtricsOrigin: ${dynamicQualtricsOrigin}`, "color: blue; font-weight: bold;", "DataObject:", dataObject);
+        
+        if (!isChatbotInitialized || !dynamicQualtricsOrigin) {
+            console.error(`[IFRAME - Instance ${SCRIPT_INSTANCE_ID}] CRITICAL: Cannot send message to Qualtrics. Conditions not met. isChatbotInitialized: ${isChatbotInitialized}, dynamicQualtricsOrigin: ${dynamicQualtricsOrigin}. Message NOT sent.`);
+            // Optionally, display an error to the user in the chat UI
+            // addMessageToChatLog("Error: Could not save data. Please check connection or contact support.", 'error');
+            return;
+        }
+
+        if (window.parent && window.parent.postMessage) {
+            try {
+                const dataString = JSON.stringify(dataObject);
+                console.log(`[IFRAME - Instance ${SCRIPT_INSTANCE_ID}] Attempting to send 'chatbot_data' to Qualtrics. Target Origin: ${dynamicQualtricsOrigin}. Stringified Payload: ${dataString}`);
+                window.parent.postMessage({
+                    type: 'chatbot_data',
+                    data: dataString 
+                }, dynamicQualtricsOrigin);
+                console.log(`[IFRAME - Instance ${SCRIPT_INSTANCE_ID}] 'chatbot_data' message sent to parent.`);
+            } catch (e) {
+                console.error(`[IFRAME - Instance ${SCRIPT_INSTANCE_ID}] Error stringifying or sending data to Qualtrics:`, e, "Original dataObject:", dataObject);
+            }
+        } else {
+            console.warn(`[IFRAME - Instance ${SCRIPT_INSTANCE_ID}] Cannot send data to Qualtrics: window.parent.postMessage is not available.`);
+        }
+    }
+
+    // --- Single listener for messages from parent (Qualtrics) ---
+    window.addEventListener('message', function(event) {
+        console.log(`[IFRAME MSG RECV - Instance ${SCRIPT_INSTANCE_ID}] Raw message: Origin=${event.origin}, Type=${event.data ? event.data.type : 'N/A'}, Data:`, event.data);
+
+        if (event.data && event.data.type === 'init_chatbot') {
+            console.log(`[IFRAME MSG RECV - Instance ${SCRIPT_INSTANCE_ID}] 'init_chatbot' received. Message Event Origin: ${event.origin}. Config provided:`, event.data.config);
+            
+            // Basic validation of the config structure
+            if (typeof event.data.config !== 'object' || event.data.config === null) {
+                console.error(`[IFRAME - Instance ${SCRIPT_INSTANCE_ID}] CRITICAL: 'init_chatbot' received, but 'config' is not a valid object. Config:`, event.data.config);
+                isChatbotInitialized = false;
+                dynamicQualtricsOrigin = null;
+                addMessageToChatLog("Error: Chatbot configuration is invalid. Please contact support.", 'error');
+                return;
+            }
+            chatbotConfig = event.data.config; // Store the received config
+
+            if (chatbotConfig.qualtricsParentOrigin && typeof chatbotConfig.qualtricsParentOrigin === 'string' && chatbotConfig.qualtricsParentOrigin.startsWith('http')) {
+                dynamicQualtricsOrigin = chatbotConfig.qualtricsParentOrigin;
+                isChatbotInitialized = true; // Mark this instance as initialized
+                console.log(`[IFRAME - Instance ${SCRIPT_INSTANCE_ID}] 'dynamicQualtricsOrigin' SET to: ${dynamicQualtricsOrigin}. isChatbotInitialized SET to: ${isChatbotInitialized}.`);
+                
+                // Update UI elements from config
+                const headerElement = document.querySelector('.chat-header');
+                if(headerElement && chatbotConfig.uiConfig && chatbotConfig.uiConfig.headerText) {
+                    headerElement.textContent = chatbotConfig.uiConfig.headerText;
+                }
+                if(chatInput && chatbotConfig.uiConfig && chatbotConfig.uiConfig.inputPlaceholder) {
+                    chatInput.placeholder = chatbotConfig.uiConfig.inputPlaceholder;
+                }
+                // Add initial bot message from config if it exists and no messages are present yet
+                if(chatbotConfig.initialQuestion && !chatLog.querySelector('.message')) { 
+                    addMessageToChatLog(chatbotConfig.initialQuestion, 'model');
+                }
+
+                // Send config to Python backend (if applicable) - Temporarily Commented Out
+                /*
+                fetch('/config', { // Assuming your Flask app serves the chat.html at the root
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ session_id: currentSessionId, config: chatbotConfig })
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        console.error(`[IFRAME - Instance ${SCRIPT_INSTANCE_ID}] Error sending config to server. Status: ${response.status}`);
+                        return response.text().then(text => { throw new Error(text || 'Server error') });
+                    }
+                    console.log(`[IFRAME - Instance ${SCRIPT_INSTANCE_ID}] Config sent to server successfully.`);
+                })
+                .catch(error => console.error(`[IFRAME - Instance ${SCRIPT_INSTANCE_ID}] Error sending config to server:`, error));
+                */
+
+            } else {
+                isChatbotInitialized = false; 
+                dynamicQualtricsOrigin = null;
+                console.error(`[IFRAME - Instance ${SCRIPT_INSTANCE_ID}] CRITICAL: 'init_chatbot' received, but 'qualtricsParentOrigin' is MISSING or INVALID in config. Config:`, chatbotConfig, `isChatbotInitialized is now ${isChatbotInitialized}.`);
+                addMessageToChatLog("Error: Chatbot cannot securely connect. Missing origin configuration.", 'error');
+            }
+        } else if (event.data && event.data.type === 'get_chat_data') {
+            console.log(`[IFRAME MSG RECV - Instance ${SCRIPT_INSTANCE_ID}] 'get_chat_data' received. Message Event Origin: ${event.origin}. Current dynamicQualtricsOrigin: ${dynamicQualtricsOrigin}. isChatbotInitialized: ${isChatbotInitialized}.`);
+
+            if (event.origin !== dynamicQualtricsOrigin) {
+                console.warn(`[IFRAME - Instance ${SCRIPT_INSTANCE_ID}] INFO: 'get_chat_data' origin ('${event.origin}') does not match dynamicQualtricsOrigin ('${dynamicQualtricsOrigin}'). This is expected if Qualtrics proxies this message (e.g., from google.qualtrics.com). Proceeding based on initialization status.`);
+            }
+
+            if (!isChatbotInitialized) {
+                console.error(`[IFRAME - Instance ${SCRIPT_INSTANCE_ID}] CRITICAL: Received 'get_chat_data', but chatbot is NOT INITIALIZED (isChatbotInitialized: false). Ignoring message.`);
+                addMessageToChatLog("Error: Chatbot not initialized. Cannot retrieve data. Please ensure configuration was received.", "error");
+                return;
+            }
+
+            // If we reach here, chatbot is initialized. Send data.
+            const messagesToSend = [];
+            chatLog.querySelectorAll('.message').forEach(msgElement => {
+                let role = null;
+                if (msgElement.classList.contains('user-message')) role = 'user';
+                else if (msgElement.classList.contains('bot-message')) role = 'model';
+                
+                // Only send user and model messages to represent the actual conversation
+                if (role) {
+                    messagesToSend.push({ role: role, parts: [msgElement.textContent || ''] });
+                }
+            });
+            console.log(`[IFRAME - Instance ${SCRIPT_INSTANCE_ID}] History collected for 'get_chat_data':`, messagesToSend);
+
+            // Always send a stringified object with metadata, not just the array
+            const payload = {
+                qid: chatbotConfig && chatbotConfig.qid ? chatbotConfig.qid : null,
+                session_id: currentSessionId,
+                history: messagesToSend,
+                timestamp: new Date().toISOString()
+            };
+            sendDataToQualtrics(payload);
+        } else {
+            // Handle other potential messages or log them as unknown
+            let messageType = event.data ? event.data.type : 'N/A';
+            let origin = event.origin;
+            console.warn(`[IFRAME MSG RECV - Instance ${SCRIPT_INSTANCE_ID}] Received unhandled/unknown message type '${messageType}' from origin '${origin}'. Data:`, event.data);
+        }
+    });
+
+    // Inform the parent window that this iframe instance's listener is attached and ready for config
+    // This is part of the handshake mechanism
+    console.log(`[IFRAME SCRIPT END - Instance ${SCRIPT_INSTANCE_ID}] Listener attached. Sending 'iframe_ready_for_config' to parent. Current dynamicQualtricsOrigin: ${dynamicQualtricsOrigin}, isChatbotInitialized: ${isChatbotInitialized}`);
+    // Ensure window.parent exists and postMessage is available before calling it.
+    if (window.parent && typeof window.parent.postMessage === 'function') {
+        window.parent.postMessage({ type: 'iframe_ready_for_config', instanceId: SCRIPT_INSTANCE_ID }, '*'); // '*' is acceptable here as parent will verify origin of this message.
+    } else {
+        console.error(`[IFRAME - Instance ${SCRIPT_INSTANCE_ID}] Cannot send 'iframe_ready_for_config': window.parent or window.parent.postMessage is not available.`);
+        // This might happen if the iframe is not embedded or in a sandboxed environment that restricts parent access.
+    }
+
+</script>
 </body>
 </html>

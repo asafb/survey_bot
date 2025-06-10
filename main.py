@@ -31,17 +31,19 @@ try:
     if not api_key:
         raise ValueError("GEMINI_API_KEY not found in environment variables.")
     genai.configure(api_key=api_key)
+
     # Use Flash for speed/cost with large context window
-    model_name = "gemini-2.5-flash-preview-04-17"
+    model_name = "gemini-2.5-flash-preview-05-20" # Updated to a valid model from list_models()
     # Base model instance - system prompt applied per-call now
     logger.info(f"Gemini base model configured: '{model_name}'.")
+
     generation_config = genai.types.GenerationConfig(
         temperature=0.7,
         # max_output_tokens=150 # Optional: Limit bot response length
     )
 except Exception as e:
     logger.error(f"Gemini Initialization error: {e}", exc_info=True)
-    exit()
+    logger.error("Critical initialization error, but continuing to allow health checks.")
 
 # --- Configure Firestore Client ---
 try:
@@ -55,12 +57,12 @@ try:
         project=project_id,
         database=database_id
     )
-    SESSIONS_COLLECTION = "chatbot_sessions_step5" # Use a distinct name for testing this step
+    SESSIONS_COLLECTION = "chatbot_sessions_step5" # Corrected based on user-provided working version
     logger.info(f"Firestore client initialized for project '{project_id}' targeting database '{database_id}'. Using collection '{SESSIONS_COLLECTION}'.")
 
 except Exception as e:
     logger.error(f"Error initializing Firestore client: {e}", exc_info=True)
-    exit()
+    logger.error("Critical initialization error, but continuing to allow health checks.")
 
 # --- FastAPI App ---
 app = FastAPI()
@@ -71,7 +73,7 @@ try:
     logger.info("Jinja2 templates initialized.")
 except Exception as e:
     logger.error(f"Error initializing Jinja2 templates: {e}", exc_info=True)
-    exit()
+    logger.error("Critical initialization error, but continuing to allow health checks.")
 
 # --- Static Files Mount (for CSS) ---
 try:
@@ -83,7 +85,7 @@ try:
     logger.info("Static files mounted.")
 except Exception as e:
      logger.error(f"Error mounting static files: {e}", exc_info=True)
-     exit()
+     logger.error("Critical initialization error, but continuing to allow health checks.")
 
 # --- Default Session State ---
 def get_default_session_state():
@@ -96,7 +98,7 @@ def get_default_session_state():
 # --- LLM Helper Function ---
 async def generate_llm_response(system_prompt: str, history: list) -> str:
     """Generates response using Gemini, passing history and system instruction."""
-    logger.debug(f"LLM Call Start. History length: {len(history)}. System Prompt: '{system_prompt[:100]}...'")
+    logger.debug(f"LLM Call Start. History length: {len(history)}. System Prompt: '{system_prompt[:100]}...'" )
     if history:
          log_history = json.dumps(history[-4:], indent=2) # Log last 2 Q&A pairs
          logger.debug(f"LLM Call History Snippet:\n{log_history}")
@@ -140,9 +142,9 @@ async def generate_llm_response(system_prompt: str, history: list) -> str:
              return "ERROR_LLM_EMPTY_TEXT"
 
         # Basic sanitization
-        result_text = re.sub(r'^[\s"\']+|[\s"\']+$', '', result_text)
+        result_text = re.sub(r'^[\s\"\']+|[\s\"\']+$', '', result_text)
         result_text = re.sub(r'^(Assistant|XUX):\s*', '', result_text, flags=re.IGNORECASE)
-        logger.debug(f"LLM Call End. Result: '{result_text[:100]}...'")
+        logger.debug(f"LLM Call End. Result: '{result_text[:100]}...'" )
         return result_text
 
     except google.api_core.exceptions.GoogleAPIError as e:
@@ -160,7 +162,6 @@ async def generate_llm_response(system_prompt: str, history: list) -> str:
 INITIAL_SURVEY_QUESTION = "What are your main pain points with this product?" # Example
 
 # --- Define your Pydantic models for the config ---
-# (You might have these already from previous suggestions, ensure they match what JS sends)
 class PromptParams(BaseModel):
     maxFollowUps: int = 10
     focusAreas: List[str] = Field(default_factory=list)
@@ -179,13 +180,6 @@ class ChatbotConfig(BaseModel):
     uiConfig: UiConfig = Field(default_factory=UiConfig)
 
 # --- Store the configuration (globally or per session) ---
-# For simplicity, let's use a global variable for now.
-# In a production system, you'd likely store this per session_id in Firestore
-# alongside the conversation history if it can vary per respondent.
-# This will hold the latest config received from ANY Qualtrics iframe instance.
-# If multiple users are taking the survey simultaneously with different configs,
-# this simple global approach will lead to them overwriting each other's configs
-# for the Python backend. A session-based approach is more robust for multiple users.
 current_chatbot_config: ChatbotConfig = ChatbotConfig() # Initialize with default
 
 # --- Add the new /config endpoint ---
@@ -194,9 +188,6 @@ async def receive_config(config: ChatbotConfig):
     global current_chatbot_config
     current_chatbot_config = config
     logger.info(f"Received new chatbot configuration: {config.model_dump_json(indent=2)}")
-    # You might want to save this config to Firestore associated with a session_id
-    # if the config can change per user/session initiated from Qualtrics.
-    # For now, just updating a global one.
     return {"message": "Configuration received successfully."}
 
 def generate_system_prompt(config: ChatbotConfig) -> str:
@@ -269,171 +260,223 @@ def save_session_state(session_id: str, current_state_dict: dict):
          logger.error(f"Session {session_id}: Error saving state to Firestore: {e}", exc_info=True)
 
 # --- FastAPI App Instance ---
-app = FastAPI()
+# app = FastAPI() # This was duplicated, the one above is fine.
 
 # --- Jinja2 Template Setup ---
-templates = Jinja2Templates(directory="templates")
+# templates = Jinja2Templates(directory="templates") # This was duplicated
 
 # --- Endpoints ---
 
-@app.post("/config")
-async def receive_config(config: ChatbotConfig):
-    global current_chatbot_config
-    current_chatbot_config = config
-    logger.info(f"Received new chatbot configuration: {config.model_dump_json(indent=2)}")
-    return {"message": "Configuration received successfully."}
+# @app.post("/config") # This was duplicated
+# async def receive_config(config: ChatbotConfig):
+#     global current_chatbot_config
+#     current_chatbot_config = config
+#     logger.info(f"Received new chatbot configuration: {config.model_dump_json(indent=2)}")
+#     return {"message": "Configuration received successfully."}
 
-@app.get("/health", response_class=JSONResponse)
+@app.get("/health")
 async def health_check():
     """Simple health check endpoint."""
-    logger.info("Health check endpoint called.")
-    return {"status": "ok"}
+    # Add diagnostics about what services initialized successfully
+    status = {
+        "status": "ok",
+        "gemini": api_key is not None,
+        "firestore": 'db' in globals() and db is not None,
+        "templates": 'templates' in globals() and templates is not None,
+        "app_version": "2.0.1"
+    }
+    logger.info(f"Health check: {status}")
+    return status
 
 @app.get("/", response_class=HTMLResponse)
 async def get_chat_page(request: Request, session_id: str | None = None):
     """Handles initial load or refresh - renders chat interface"""
     logger.info(f"GET / endpoint entered. Provided session_id: {session_id}")
     is_new_session = False
-    if not session_id:
-        session_id = db.collection('_temp').document().id # Generate new Firestore-style ID
-        is_new_session = True
-        logger.info(f"GET request: No session_id provided, generated new one: {session_id}")
-        current_state = get_default_session_state()
-        # Use the initialQuestion from the globally (or session-specifically) stored config
-        effective_initial_question = current_chatbot_config.initialQuestion
-        # Add initial prompt to history for new sessions
-        current_state["history"] = [{'role': 'model', 'parts': [effective_initial_question]}]
-        save_session_state(session_id, current_state) # Save initial state
-    else:
-         logger.info(f"GET request for existing session {session_id}. Loading state.")
-         current_state = load_session_state(session_id)
-         if not current_state.get("history"):
-              logger.warning(f"Session {session_id}: Loaded state but history was empty. Adding initial question from config: '{current_chatbot_config.initialQuestion}'")
-              current_state["history"] = [{'role': 'model', 'parts': [current_chatbot_config.initialQuestion]}]
-
-    conversation_history = current_state.get("history", [])
-    conversation_active = True
-    if conversation_history and conversation_history[-1]['role'] == 'model' and "thank you," in conversation_history[-1]['parts'][0].lower():
-         conversation_active = False
-
-    template_context = { "request": request, "session_id": session_id, "history": conversation_history,
-                         "conversation_active": conversation_active, "final_data_to_post": None,
-                         "ui_config": current_chatbot_config.uiConfig }
-    logger.info(f"GET request for session {session_id}: Rendering template.")
+    
     try:
+        if not session_id:
+            session_id = db.collection('_temp').document().id # Generate new Firestore-style ID
+            is_new_session = True
+            logger.info(f"GET request: No session_id provided, generated new one: {session_id}")
+            current_state = get_default_session_state()
+            # Use the initialQuestion from the globally (or session-specifically) stored config
+            effective_initial_question = current_chatbot_config.initialQuestion
+            # Add initial prompt to history for new sessions
+            current_state["history"] = [{'role': 'model', 'parts': [effective_initial_question]}]
+            save_session_state(session_id, current_state) # Save initial state
+        else:
+             logger.info(f"GET request for existing session {session_id}. Loading state.")
+             current_state = load_session_state(session_id)
+             if not current_state.get("history"):
+                  logger.warning(f"Session {session_id}: Loaded state but history was empty. Adding initial question from config: '{current_chatbot_config.initialQuestion}'")
+                  current_state["history"] = [{'role': 'model', 'parts': [current_chatbot_config.initialQuestion]}]
+
+        conversation_history = current_state.get("history", [])
+        conversation_active = True
+        if conversation_history and conversation_history[-1]['role'] == 'model' and "thank you," in conversation_history[-1]['parts'][0].lower():
+             conversation_active = False
+
+        template_context = { 
+            "request": request, 
+            "session_id": session_id, 
+            "history": conversation_history,
+            "conversation_active": conversation_active, 
+            "final_data_to_post": None,
+            "ui_config": current_chatbot_config.uiConfig 
+        }
+        logger.info(f"GET request for session {session_id}: Rendering template.")
         return templates.TemplateResponse("chat.html", template_context)
-    except Exception as template_e:
-         logger.error(f"Session {session_id}: Error rendering template: {template_e}", exc_info=True)
-         return HTMLResponse("<html><body><h1>Template Error</h1></body></html>", status_code=500)
+    except Exception as e:
+        # More detailed error handling
+        logger.error(f"Error in GET handler: {str(e)}", exc_info=True)
+        return HTMLResponse(f"<html><body><h1>App Error</h1><p>Error: {str(e)}</p><p>Please check the logs for details.</p></body></html>", status_code=500)
 
-
-@app.post("/", response_class=HTMLResponse)
+@app.post("/", response_class=HTMLResponse) # Reverted to HTMLResponse
 async def post_chat_message(
     request: Request,
     session_id: str = Form(...),
     prompt: str = Form(...),
-    # config: Optional[ChatbotConfig] = None # Remove this, config will come from global/session
 ):
     """Handles user form submission, calls LLM, updates state, and re-renders."""
     logger.info(f">>>>>>> POST / endpoint entered for session {session_id} <<<<<<<")
 
-    # Use the globally (or session-specifically) stored config
-    system_prompt = generate_system_prompt(current_chatbot_config) # Pass the whole config object
+    # Log the current configuration
+    logger.info(f"Current chatbot config: {current_chatbot_config.model_dump_json(indent=2)}")
+    system_prompt = generate_system_prompt(current_chatbot_config)
+    # Log first 500 chars of system prompt
+    logger.info(f"System prompt (first 500 chars): {system_prompt[:500]}{'...' if len(system_prompt) > 500 else ''}")
     
     user_prompt = prompt.strip()
-    logger.info(f"POST request for session {session_id}. User prompt: '{user_prompt[:100]}...'")
-    bot_response_text = "Sorry, something went wrong processing your message." # Default
+    logger.info(f"POST request for session {session_id}. User prompt: '{user_prompt[:100]}...'" )
+    bot_response_text = "Sorry, something went wrong processing your message."
     conversation_history = []
     conversation_active = True
-    final_data_to_post = None
-    current_state = {} # Initialize
+    final_data_to_post = None # For potential postMessage if conversation ends
+    current_state = {}
 
     try:
-        # --- Load Conversation History ---
-        current_state = load_session_state(session_id) # Uses helper
+        current_state = load_session_state(session_id)
         conversation_history = current_state.get("history", [])
-        logger.debug(f"Session {session_id}: History loaded.")
 
-        # --- Append User Prompt (if not empty) ---
         if not user_prompt:
-             logger.warning(f"Session {session_id}: Received empty prompt on POST.")
-             bot_response_text = "Please type a response."
-             conversation_active = True # Keep interface active
-             # Skip LLM call, just save state to update timestamp
-             save_session_state(session_id, current_state)
+            logger.warning(f"Session {session_id}: Received empty prompt on POST.")
+            bot_response_text = "Please type a response."
+            save_session_state(session_id, current_state) # Save to update timestamp
         else:
-             conversation_history.append({'role': 'user', 'parts': [user_prompt]})
-             current_state["history"] = conversation_history # Update state dict
+            conversation_history.append({'role': 'user', 'parts': [user_prompt]})
+            current_state["history"] = conversation_history
 
-             # --- Call LLM --- <<<< MODIFIED PART >>>>
-             logger.info(f"Session {session_id}: Calling LLM with history length {len(conversation_history)}...")
-             llm_response = await generate_llm_response(system_prompt, conversation_history)
-             logger.info(f"Session {session_id}: LLM call completed.")
+            logger.info(f"Session {session_id}: Calling LLM with history length {len(conversation_history)}...")
+            logger.debug(f"Conversation history: {json.dumps(conversation_history, indent=2)}")
+            llm_response = await generate_llm_response(system_prompt, conversation_history)
+            logger.info(f"Session {session_id}: LLM call completed. Response: '{llm_response[:200]}...'" if llm_response else 'No response')
 
-             if llm_response.startswith("ERROR_LLM"):
-                 logger.error(f"Session {session_id}: LLM call failed: {llm_response}")
-                 # Handle specific errors for user feedback
-                 if llm_response == "ERROR_LLM_BLOCKED":
-                      bot_response_text = "I cannot process that previous request due to safety policies."
-                 elif llm_response == "ERROR_LLM_AUTH_ERROR":
-                      bot_response_text = "There seems to be an authentication issue with the AI service."
-                 else: # NO_RESPONSE, EMPTY_TEXT, UNKNOWN, API_ERROR
-                      bot_response_text = "Sorry, I encountered an internal error generating a response."
-                 # Don't append this error to history
-             else:
-                 bot_response_text = llm_response # Use the successful response
-                 # Append successful bot response to history
-                 conversation_history.append({'role': 'model', 'parts': [bot_response_text]})
-                 current_state["history"] = conversation_history # Update state dict
-                 # Check if this was the concluding response
-                 if "thank you," in bot_response_text.lower():
-                      conversation_active = False
-                      logger.info(f"Session {session_id}: Conversation concluded by bot.")
-                      # Prepare data for postMessage
-                      try:
-                          final_data_to_post = json.dumps({
-                              "sessionId": session_id,
-                              "history": conversation_history # Send the final history
-                          })
-                      except Exception as json_e:
-                           logger.error(f"Session {session_id}: Failed to serialize final data for postMessage: {json_e}")
-                           final_data_to_post = json.dumps({"error": "failed to serialize history", "sessionId": session_id})
-
-             # --- Save Updated State to Firestore ---
-             # Save state regardless of LLM success (to capture user message etc.)
-             save_session_state(session_id, current_state) # Pass the whole state dict
+            if llm_response.startswith("ERROR_LLM"):
+                logger.error(f"Session {session_id}: LLM call failed: {llm_response}")
+                if llm_response == "ERROR_LLM_BLOCKED":
+                    bot_response_text = "I cannot process that previous request due to safety policies."
+                elif llm_response == "ERROR_LLM_AUTH_ERROR":
+                    bot_response_text = "There seems to be an authentication issue with the AI service."
+                else:
+                    bot_response_text = "Sorry, I encountered an internal error generating a response."
+            else:
+                bot_response_text = llm_response
+                conversation_history.append({'role': 'model', 'parts': [bot_response_text]})
+                current_state["history"] = conversation_history
+                if "thank you," in bot_response_text.lower():
+                    conversation_active = False
+                    logger.info(f"Session {session_id}: Conversation concluded by bot.")
+                    try:
+                        final_data_to_post = json.dumps({
+                            "sessionId": session_id,
+                            "history": conversation_history
+                        })
+                    except Exception as json_e:
+                        logger.error(f"Session {session_id}: Failed to serialize final data for postMessage: {json_e}")
+                        final_data_to_post = json.dumps({"error": "failed to serialize history", "sessionId": session_id})
+            
+            save_session_state(session_id, current_state)
 
     except Exception as e:
         logger.error(f"Session {session_id}: Uncaught Error DURING POST request processing: {e}", exc_info=True)
         bot_response_text = "Sorry, a critical server error occurred."
         conversation_active = False
-        # Try to add error to history for display, but state might be inconsistent
         if isinstance(conversation_history, list):
-             conversation_history.append({'role': 'model', 'parts': [bot_response_text]})
+            conversation_history.append({'role': 'model', 'parts': [bot_response_text]})
 
-    # --- Render Template ---
+    # Log the final state before rendering
+    logger.debug(f"Final conversation state - Active: {conversation_active}, History length: {len(conversation_history)}")
+    if conversation_history:
+        logger.debug(f"Last message from bot: {conversation_history[-1]['parts'][0][:200] if conversation_history[-1]['role'] == 'model' else 'User message'}")
+    
     template_context = {
         "request": request, "session_id": session_id, "history": conversation_history,
         "conversation_active": conversation_active, "final_data_to_post": final_data_to_post,
-        "ui_config": current_chatbot_config.uiConfig }
+        "ui_config": current_chatbot_config.uiConfig
+    }
     logger.info(f"Session {session_id}: Rendering template. Active: {conversation_active}, History items: {len(conversation_history)}, Posting?: {final_data_to_post is not None}")
     try:
         return templates.TemplateResponse("chat.html", template_context)
     except Exception as template_e:
-         logger.error(f"Session {session_id}: Error rendering template: {template_e}", exc_info=True)
-         return HTMLResponse("<html><body><h1>Internal Server Error</h1><p>Could not render chat interface.</p></body></html>", status_code=500)
+        logger.error(f"Session {session_id}: Error rendering template: {template_e}", exc_info=True)
+        return HTMLResponse("<html><body><h1>Internal Server Error</h1><p>Could not render chat interface.</p></body></html>", status_code=500)
 
 
 # --- Static Files Mount (needed for CSS) ---
-static_dir = os.path.join(os.path.dirname(__file__), "static")
-if not os.path.isdir(static_dir):
-     logger.warning(f"Static dir not found: {static_dir}. Creating.")
-     os.makedirs(static_dir, exist_ok=True)
-app.mount("/static", StaticFiles(directory=static_dir), name="static")
+# static_dir = os.path.join(os.path.dirname(__file__), "static") # This was duplicated
+# if not os.path.isdir(static_dir):
+#      logger.warning(f"Static dir not found: {static_dir}. Creating.")
+#      os.makedirs(static_dir, exist_ok=True)
+# app.mount("/static", StaticFiles(directory=static_dir), name="static") # This was duplicated
+
+# Add a debug endpoint to help diagnose issues
+@app.get("/debug")
+async def debug_info():
+    """Debug endpoint providing detailed information about the app state."""
+    logger.info("Debug endpoint accessed")
+    
+    # Check if templates folder exists and what files are in it
+    template_path = os.path.join(os.path.dirname(__file__), "templates")
+    templates_exist = os.path.isdir(template_path)
+    template_files = []
+    
+    if templates_exist:
+        try:
+            template_files = os.listdir(template_path)
+        except Exception as e:
+            template_files = [f"Error listing templates: {str(e)}"]
+    
+    # Get environment variables (excluding any sensitive values)
+    env_vars = {}
+    for key in os.environ:
+        if "key" in key.lower() or "secret" in key.lower() or "password" in key.lower() or "token" in key.lower():
+            env_vars[key] = "[REDACTED]"
+        else:
+            env_vars[key] = os.environ.get(key)
+    
+    # Build response
+    debug_data = {
+        "app_version": "2.0.1",
+        "environment": os.environ.get("APP_ENV", "unknown"),
+        "templates_directory_exists": templates_exist,
+        "template_files": template_files,
+        "api_services": {
+            "gemini_configured": api_key is not None,
+            "firestore_configured": 'db' in globals() and db is not None
+        },
+        "environment_variables": env_vars,
+        "python_version": sys.version,
+        "working_directory": os.getcwd(),
+        "app_directory": os.path.dirname(__file__)
+    }
+    
+    return debug_data
+
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://*.qualtrics.com"],  # Matches any Qualtrics subdomain
+    allow_origins=["*"],  # Allow all origins for testing, restrict to Qualtrics for production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
