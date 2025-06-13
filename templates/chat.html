@@ -5,62 +5,168 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Survey Bot Demo</title>
     <style>
-        /* Reset styles to prevent conflicts with parent page */
+        /* Global Resets and Base Styles */
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        
-        body { 
-            margin: 0; 
-            padding: 0; 
-            background-color: #ffffff; 
-            font-family: sans-serif;
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #f4f6f8; /* Lighter overall background */
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+            color: #333;
             height: 100vh;
             overflow: hidden;
+            display: flex; /* Ensure body takes full height for chat container */
+            flex-direction: column;
         }
-        
-        .chat-container { 
-            margin: 0; 
-            width: 100%; 
-            height: 100vh; 
-            border: none; 
-            display: flex; 
-            flex-direction: column; 
+
+        .chat-container { /* This is the main box holding the chat UI */
+            width: 100%;
+            height: 100%; /* Take full height of its parent (iframe) */
+            display: flex;
+            flex-direction: column;
+            border-radius: 8px;
+            overflow: hidden; /* Ensures child elements conform to border-radius */
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1); /* Softer, more modern shadow */
+            background-color: #ffffff; /* Changed to white for brighter appearance */
         }
-        
-        .chat-header { background-color: #444; color: white; padding: 10px; flex-shrink: 0;}
-        .chat-log { background-color: #f8f9fa; padding: 10px; flex-grow: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;} /* Added gap */
-        .input-container { background: #f0f2f5; border-top: 1px solid #ccc; padding: 8px 12px; display: flex; flex-shrink: 0;}
-        .chat-input { flex-grow: 1; margin-right: 10px; padding: 8px; border: 1px solid #ccc; border-radius: 4px;}
-        .send-button { padding: 8px 15px; cursor: pointer;}
-        /* Simple message styling */
-        .message { padding: 8px 12px; border-radius: 15px; max-width: 80%; word-wrap: break-word; line-height: 1.4;}
-        .user-message { background-color: #dcf8c6; align-self: flex-end; margin-left: auto; border-radius: 15px 15px 4px 15px;}
-        .bot-message { background-color: #eee; align-self: flex-start; border-radius: 4px 15px 15px 15px;}
-         /* Hide internal scrollbar on main input */
-         #chatInput { scrollbar-width: none; -ms-overflow-style: none; }
-         #chatInput::-webkit-scrollbar { display: none; }
-        .message.thinking-message {
-            font-style: italic;
-            color: #777;
-            padding: 8px 12px; /* Consistent padding */
-            margin-bottom: 8px; /* Consistent margin */
-            border-radius: 15px; /* Consistent border-radius */
-            max-width: 80%;
-            align-self: flex-start; /* Align to left like model messages */
-            background-color: #f0f0f0; /* Similar to model messages */
+
+        .chat-header {
+            background-color: #6c757d; /* Medium grey */
+            color: white;
+            padding: 15px;
+            text-align: center;
+            font-size: 1.2em;
+            font-weight: bold;
+            border-top-left-radius: 8px; /* Match container */
+            border-top-right-radius: 8px; /* Match container */
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        /* Chat Log / Messages Area */
+        .chat-log {
+            background-color: #ffffff; /* Keep it clean white */
+            padding: 15px;
+            flex-grow: 1;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 12px; /* Space between messages */
+        }
+
+        /* Individual Messages */
+        .message {
+            padding: 10px 15px;
+            border-radius: 18px; /* Softer, more modern radius */
+            max-width: 75%;
             word-wrap: break-word;
-            white-space: pre-wrap;
+            line-height: 1.5;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
         }
-        .message.error-message {
-            color: #D8000C; /* Error red */
-            background-color: #FFD2D2; /* Light red background */
-            border: 1px solid #D8000C;
-            padding: 8px 12px;
-            margin-bottom: 8px;
-            border-radius: 15px;
-            max-width: 80%;
+
+        .user-message {
+            background-color: #007bff; /* User messages in primary blue */
+            color: white;
+            align-self: flex-end;
+            margin-left: auto; /* Pushes to the right */
+            border-radius: 18px 18px 5px 18px; /* Slightly different shape */
+        }
+
+        .bot-message {
+            background-color: #f1f3f5; /* Even lighter grey, for better pop */
+            color: #212529; /* Dark text for bot */
             align-self: flex-start;
-            word-wrap: break-word;
-            white-space: pre-wrap;
+            border-radius: 5px 18px 18px 18px; /* Slightly different shape */
+        }
+
+        .message.thinking-message {
+            background-color: #e9ecef; /* Match bot message background */
+            align-self: flex-start;
+            display: flex;
+            align-items: center;
+            padding: 12px 15px; /* Adjust padding for dots */
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+            border-radius: 5px 18px 18px 18px;
+        }
+
+        /* Typing Indicator Animation */
+        @keyframes bounce_dots {
+            0%, 20%, 50%, 80%, 100% { transform: translateY(0); }
+            40% { transform: translateY(-8px); }
+            60% { transform: translateY(-4px); }
+        }
+
+        .thinking-message .dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #888;
+            margin: 0 2px;
+            animation: bounce_dots 1.4s infinite ease-in-out both;
+        }
+
+        .thinking-message .dot:nth-child(1) { animation-delay: -0.32s; }
+        .thinking-message .dot:nth-child(2) { animation-delay: -0.16s; }
+        .thinking-message .dot:nth-child(3) { animation-delay: 0s; }
+
+        .message.error-message {
+            color: #721c24; /* Dark red for text */
+            background-color: #f8d7da; /* Light red background */
+            border: 1px solid #f5c6cb; /* Red border */
+            align-self: flex-start;
+            box-shadow: none;
+        }
+
+        /* Input Area */
+        .input-container {
+            background: #ffffff;
+            border-top: 1px solid #e0e0e0;
+            padding: 10px 15px;
+            display: flex;
+            align-items: center; /* Vertically align items */
+            flex-shrink: 0;
+            gap: 10px;
+        }
+
+        .chat-input {
+            flex-grow: 1;
+            padding: 10px 15px;
+            border: 1px solid #ced4da;
+            border-radius: 20px; /* Pill shape */
+            font-size: 1em;
+            line-height: 1.4;
+            resize: none; /* Prevent manual resize of textarea */
+            scrollbar-width: none; /* Firefox */
+            -ms-overflow-style: none;  /* IE 10+ */
+        }
+        .chat-input::-webkit-scrollbar { display: none; } /* WebKit */
+
+        .chat-input:focus {
+            outline: none;
+            border-color: #80bdff;
+            box-shadow: 0 0 0 0.2rem rgba(0,123,255,.25);
+        }
+
+        .send-button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 8px; /* More of a square with rounded edges */
+            padding: 10px 20px; /* Keep padding for text */
+            font-size: 1em;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+        }
+
+        .send-button:hover {
+            background-color: #0056b3;
+        }
+
+        .send-button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
         }
     </style>
 </head>
@@ -173,20 +279,27 @@
         if (!chatLog) return null;
 
         const existingThinking = document.getElementById('thinkingIndicator');
-        if (existingThinking && role !== 'thinking') { // Don't remove if we are adding a new thinking msg
+        if (existingThinking && role !== 'thinking') {
             existingThinking.remove();
         }
 
         const messageDiv = document.createElement('div');
         messageDiv.classList.add('message');
-        messageDiv.textContent = text;
+        
         if (role === 'user') {
-             messageDiv.classList.add('user-message');
-             messageDiv.dataset.text = text; // Store original text for submit handler check
+            messageDiv.classList.add('user-message');
+            messageDiv.textContent = text;
+            messageDiv.dataset.text = text;
+        } else if (role === 'model') {
+            messageDiv.classList.add('bot-message');
+            messageDiv.textContent = text;
+        } else if (role === 'thinking') {
+            messageDiv.classList.add('thinking-message');
+            messageDiv.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
+        } else if (role === 'error') {
+            messageDiv.classList.add('error-message');
+            messageDiv.textContent = text;
         }
-        else if (role === 'model') messageDiv.classList.add('bot-message');
-        else if (role === 'thinking') messageDiv.classList.add('thinking-message');
-        else if (role === 'error') messageDiv.classList.add('error-message');
         
         if (id) messageDiv.id = id;
 

@@ -174,64 +174,256 @@ window.lastReceivedChatData = null;
 // Track if embedded data has been set in the current page
 window.chatDataSetInCurrentPage = false;
 
-// Function to save chat data using multiple methods for reliability
-function saveChatDataToQualtrics(dataString) {
-    console.log("[QUALTRICS GLOBAL] Attempting to save chatData:", dataString);
-    if (typeof dataString !== 'string' || dataString.trim() === "") {
-        console.warn("[QUALTRICS GLOBAL] saveChatDataToQualtrics: Invalid dataString provided.");
-        return;
-    }
-
+// Function to create or update hidden fields in the Qualtrics form
+// This approach uses actual form fields that Qualtrics will submit with the page
+function createHiddenQuestionField(qid, fieldName, fieldValue) {
+    console.log("[QUALTRICS QID: " + qid + "] Creating hidden field for " + fieldName);
     try {
-        JSON.parse(dataString); // Validate JSON format
-        window.lastReceivedChatData = dataString;
-        window.chatDataSetInCurrentPage = true; // Mark that data has been processed for this page
-
-        try {
-            window.sessionStorage.setItem('qualtricsLastChatData', dataString);
-            console.log("[QUALTRICS GLOBAL] Chat data backed up to sessionStorage.");
-        } catch (storageErr) {
-            console.warn("[QUALTRICS GLOBAL] Could not save chat data to sessionStorage:", storageErr);
+        // First try to find the question container
+        let questionContainer = null;
+        
+        // First attempt: Try the standard QID format
+        questionContainer = document.getElementById("QID" + qid.replace('QID', ''));
+        
+        // Second attempt: Try the full question container ID
+        if (!questionContainer) {
+            questionContainer = document.getElementById("QR~" + qid);
         }
-
-        // Method 1: Try to use the QSI API directly (often most reliable)
-        if (typeof QSI !== 'undefined' && typeof QSI.API !== 'undefined' && typeof QSI.API.setEDValue === 'function') {
-            console.log("[QUALTRICS GLOBAL] Using QSI.API.setEDValue to save 'chatData'.");
-            QSI.API.setEDValue('chatData', dataString, true); // true for immediate save if supported
-            console.log("[QUALTRICS GLOBAL] QSI.API.setEDValue call completed for 'chatData'.");
-            return; // Data saved with preferred method
-        }
-
-        // Method 2: Look for the Qualtrics JFE internal API
-        if (window.JFE && typeof window.JFE.getActivePageController === 'function') {
-            const activePageController = window.JFE.getActivePageController();
-            if (activePageController && activePageController.runtime && typeof activePageController.runtime.ED !== 'undefined') {
-                console.log("[QUALTRICS GLOBAL] Using JFE internal API (runtime.ED) to save 'chatData'.");
-                activePageController.runtime.ED['chatData'] = dataString;
-                console.log("[QUALTRICS GLOBAL] Set 'chatData' via JFE.runtime.ED.");
-                // Try to force save if possible
-                if (typeof activePageController.saveEDValues === 'function') {
-                    activePageController.saveEDValues(['chatData']);
-                    console.log("[QUALTRICS GLOBAL] Called JFE saveEDValues to persist 'chatData'.");
-                }
-                return; // Data saved
+        
+        // Third attempt: Try to find any Qualtrics question container
+        if (!questionContainer) {
+            const containers = document.querySelectorAll('.QuestionOuter, .QuestionBody');
+            if (containers.length > 0) {
+                questionContainer = containers[0];
+                console.log("[QUALTRICS QID: " + qid + "] Using generic question container");
             }
         }
-
-        // Method 3: Use the standard Qualtrics API
-        console.log("[QUALTRICS GLOBAL] Using standard Qualtrics.SurveyEngine.setEmbeddedData for 'chatData'.");
-        Qualtrics.SurveyEngine.setEmbeddedData('chatData', dataString);
-        // Immediately log the value to confirm it's set in the current page context
-        const readback = Qualtrics.SurveyEngine.getEmbeddedData('chatData');
-        console.log("[QUALTRICS GLOBAL] Embedded data 'chatData' SET with string of length: " + dataString.length);
-        console.log("[QUALTRICS GLOBAL] Readback chatData:", readback);
-        console.log("[QUALTRICS GLOBAL] Standard Qualtrics.SurveyEngine.setEmbeddedData call completed for 'chatData'.");
-
+        
+        if (!questionContainer) {
+            console.warn("[QUALTRICS QID: " + qid + "] Could not find question container");
+            return false;
+        }
+        
+        // Field IDs/names based on Qualtrics naming convention
+        const fieldId = "QR~" + qid + "~" + fieldName;
+        const formId = "QR~" + qid;
+        
+        // Check if we already created this field
+        let hiddenInput = document.getElementById(fieldId);
+        if (!hiddenInput) {
+            // Create a hidden input field 
+            hiddenInput = document.createElement('input');
+            hiddenInput.type = 'hidden';
+            hiddenInput.id = fieldId;
+            hiddenInput.name = fieldName;  // Important for Qualtrics to capture it
+            hiddenInput.className = 'chatbotDataField';
+            
+            // Add special attributes to ensure Qualtrics processes this as a form field
+            hiddenInput.setAttribute('data-qid', qid);
+            hiddenInput.setAttribute('data-runtime-value', 'runtime.Value');
+            
+            // Create a label for accessibility
+            const label = document.createElement('label');
+            label.id = fieldName + "-label";
+            label.style.display = 'none';
+            label.textContent = "Chat Data";
+            hiddenInput.setAttribute('aria-labelledby', label.id);
+            
+            // Append elements to question container
+            questionContainer.appendChild(label);
+            questionContainer.appendChild(hiddenInput);
+            
+            // Also create a simple form field with standard ID pattern
+            const formField = document.createElement('input');
+            formField.type = 'hidden';
+            formField.id = formId;
+            formField.name = formId;
+            formField.value = fieldValue;
+            questionContainer.appendChild(formField);
+            
+            console.log("[QUALTRICS QID: " + qid + "] Created new hidden field: " + fieldId);
+        }
+        
+        // Set the value
+        hiddenInput.value = fieldValue;
+        
+        // Also try to find and update any questions directly in the Qualtrics form
+        const formElements = document.querySelectorAll('input[name="' + formId + '"]');
+        if (formElements.length > 0) {
+            formElements.forEach(function(el) {
+                el.value = fieldValue;
+            });
+        }
+        
+        return true;
     } catch (e) {
-        console.error("[QUALTRICS GLOBAL] Error in saveChatDataToQualtrics. Data: " + dataString + ". Error:", e);
+        console.error("[QUALTRICS QID: " + qid + "] Error creating hidden field:", e);
+        return false;
     }
 }
 
+// Function to save chat data using multiple methods for reliability
+function saveChatDataToQualtrics(dataString) {
+    console.log("[QUALTRICS GLOBAL] Attempting to save chatData:", dataString);
+
+    if (typeof dataString !== 'string' || dataString.trim() === "") {
+        console.warn("[QUALTRICS GLOBAL] Invalid data string received:", dataString);
+        return false;
+    }
+
+    try {
+        // Validate it's proper JSON first
+        JSON.parse(dataString);
+    } catch (e) {
+        console.error("[QUALTRICS GLOBAL] Failed to parse data as JSON. Error:", e);
+        return false;
+    }
+
+    // Store globally for access in other contexts (like onunload)
+    window.lastReceivedChatData = dataString;
+
+    // Store in session storage as a backup
+    try {
+        if (window.sessionStorage) {
+            window.sessionStorage.setItem('qualtricsLastChatData', dataString);
+            console.log("[QUALTRICS GLOBAL] Chat data saved to sessionStorage.");
+        }
+    } catch (storageError) {
+        console.warn("[QUALTRICS GLOBAL] Failed to save to sessionStorage:", storageError);
+    }
+
+    // Use the official Qualtrics API
+    let saveSuccessful = false;
+    
+    try {
+        // Method 1: Standard API
+        if (typeof Qualtrics !== 'undefined' && 
+            typeof Qualtrics.SurveyEngine !== 'undefined' && 
+            typeof Qualtrics.SurveyEngine.setEmbeddedData === 'function') {
+            
+            console.log("[QUALTRICS GLOBAL] Using Qualtrics.SurveyEngine.setEmbeddedData");
+            Qualtrics.SurveyEngine.setEmbeddedData('chatData', dataString);
+            saveSuccessful = true;
+        }
+    } catch (e) {
+        console.warn("[QUALTRICS GLOBAL] Error using standard setEmbeddedData:", e);
+    }
+
+    // Try using internal Qualtrics registry object
+    try {
+        if (typeof Qualtrics !== 'undefined' && 
+            typeof Qualtrics.SurveyEngine !== 'undefined' && 
+            typeof Qualtrics.SurveyEngine.registry !== 'undefined' && 
+            Qualtrics.SurveyEngine.registry.qobj) {
+            
+            console.log("[QUALTRICS GLOBAL] Using Qualtrics.SurveyEngine.registry.qobj.setEDValue");
+            // Force the data into the internal registry object
+            Qualtrics.SurveyEngine.registry.qobj.setEDValue('chatData', dataString);
+            
+            // Some versions of Qualtrics might require an explicit save on the registry
+            if (typeof Qualtrics.SurveyEngine.registry.save === 'function') {
+                console.log("[QUALTRICS GLOBAL] Calling Qualtrics.SurveyEngine.registry.save()");
+                Qualtrics.SurveyEngine.registry.save();
+            }
+            
+            saveSuccessful = true;
+        }
+    } catch (e) {
+        console.warn("[QUALTRICS GLOBAL] Error using registry setEDValue:", e);
+    }
+
+    // Try to find active question ID for the hidden field
+    let activeQID = "";
+    try {
+        // Method 1: Check all question containers to find active ones
+        document.querySelectorAll('.QuestionOuter, .QuestionBody, [id^="QID"]').forEach(function(el) {
+            if (el.id && el.id.startsWith('QID') && el.style.display !== 'none') {
+                activeQID = el.id;
+            }
+        });
+
+        // Method 2: Try to find via DOM hierarchy
+        if (!activeQID) {
+            const iframe = document.querySelector('iframe[src*="qualtrics-chatbot"]');
+            if (iframe) {
+                // Go up the DOM to find the nearest question container
+                let parent = iframe.parentElement;
+                while (parent) {
+                    if (parent.id && parent.id.startsWith('QID')) {
+                        activeQID = parent.id;
+                        break;
+                    }
+                    parent = parent.parentElement;
+                }
+            }
+        }
+        
+        // 3. Check for QID in various parts of Qualtrics object
+        if (!activeQID && typeof Qualtrics !== 'undefined') {
+            // Try to get from the registry
+            if (Qualtrics.SurveyEngine && 
+                Qualtrics.SurveyEngine.registry && 
+                Qualtrics.SurveyEngine.registry.qrid) {
+                activeQID = Qualtrics.SurveyEngine.registry.qrid;
+            } 
+            // Try to get from the current question
+            else if (Qualtrics.SurveyEngine && 
+                     Qualtrics.SurveyEngine.QuestionInfo && 
+                     Qualtrics.SurveyEngine.QuestionInfo.QID) {
+                activeQID = "QID" + Qualtrics.SurveyEngine.QuestionInfo.QID;
+            }
+        }
+
+        // 4. Also try to use any QIDs we know from the handshake state
+        if (!activeQID) {
+            for (let qid in chatbotHandshakeState) {
+                if (qid && qid.startsWith('QID')) {
+                    activeQID = qid;
+                    break;
+                }
+            }
+        }
+
+        if (activeQID) {
+            console.log("[QUALTRICS GLOBAL] Found active QID:", activeQID);
+            
+            // Create hidden form fields for this QID
+            const hiddenFieldCreated = createHiddenQuestionField(activeQID, 'chatData', dataString);
+            console.log("[QUALTRICS GLOBAL] Hidden field creation result:", hiddenFieldCreated);
+            
+            if (hiddenFieldCreated) {
+                saveSuccessful = true;
+                window.chatDataSetInCurrentPage = true;
+            }
+        } else {
+            console.warn("[QUALTRICS GLOBAL] Could not find active QID for hidden field");
+            
+            // Fallback: Try to create hidden field in any question container
+            try {
+                const containers = document.querySelectorAll('.QuestionOuter, .QuestionBody');
+                if (containers.length > 0) {
+                    const fallbackQID = "chatbot_container";
+                    const hiddenFieldCreated = createHiddenQuestionField(fallbackQID, 'chatData', dataString);
+                    console.log("[QUALTRICS GLOBAL] Fallback hidden field creation result:", hiddenFieldCreated);
+                    if (hiddenFieldCreated) {
+                        saveSuccessful = true;
+                        window.chatDataSetInCurrentPage = true;
+                    }
+                }
+            } catch (containerError) {
+                console.error("[QUALTRICS GLOBAL] Error creating fallback hidden field:", containerError);
+            }
+        }
+    } catch (qidError) {
+        console.error("[QUALTRICS GLOBAL] Error finding active QID:", qidError);
+    }
+    
+    // Update global state and return result
+    window.chatDataSetInCurrentPage = saveSuccessful;
+    return saveSuccessful;
+}
+
+// ... (rest of the code remains the same)
 
 // --- Global listener for messages from the iframe --- 
 if (!window.qualtricsChatbotMessageListenerAttached) {
@@ -276,13 +468,28 @@ if (!window.qualtricsChatbotMessageListenerAttached) {
                     if (event.origin === chatbotOrigin) {
                         const receivedDataString = event.data.data;
                         console.log("[QUALTRICS GLOBAL] 'chatbot_data' received from chatbot. Raw data string:", receivedDataString);
-                        saveChatDataToQualtrics(receivedDataString); // Use the consolidated save function
+                        
+                        // Extract QID from the data if possible
+                        let currentQID = "";
+                        try {
+                            const parsedData = JSON.parse(receivedDataString);
+                            if (parsedData && parsedData.qid) {
+                                currentQID = parsedData.qid;
+                                console.log("[QUALTRICS GLOBAL] Extracted QID from chat data: " + currentQID);
+                            }
+                        } catch (e) {}
+                        
+                        if (typeof receivedDataString === 'string' && receivedDataString.trim() !== "") {
+                            saveChatDataToQualtrics(receivedDataString); // Use the consolidated save function
+                        } else {
+                            console.warn(`[QUALTRICS GLOBAL] 'chatbot_data' message received from non-chatbot origin ${event.origin}. Expected ${chatbotOrigin}. Ignoring.`);
+                        }
                     } else {
                         console.warn(`[QUALTRICS GLOBAL] 'chatbot_data' message received from non-chatbot origin ${event.origin}. Expected ${chatbotOrigin}. Ignoring.`);
                     }
                     break;
 
-                default:
+                // ... (rest of the code remains the same)
                     if (event.origin === chatbotOrigin) {
                         console.log("[QUALTRICS GLOBAL] Received other message type from chatbot: " + event.data.type + ". Data:", event.data);
                     } else if (event.origin === qualtricsParentOrigin) {
@@ -352,38 +559,128 @@ Qualtrics.SurveyEngine.addOnReady(function() {
                 console.error("[QUALTRICS QID: " + qid + "] Could not find iframe (selector: #iframeContainer-" + qid + " iframe) to send 'get_chat_data'.");
             }
 
-            console.log("[QUALTRICS QID: " + qid + "] Preventing default navigation and setting timeout for 7000ms.");
+            console.log("[QUALTRICS QID: " + qid + "] Preventing default navigation and setting timeout for 700ms.");
             event.preventDefault(); 
             
-            // Use a timeout to allow time for the message to be processed and data to be saved
             setTimeout(function() {
                 console.log("[QUALTRICS QID: " + qid + "] Executing delayed navigation to next page.");
                 
-                // TEST: Set Embedded Data to simple values to debug persistence
-                Qualtrics.SurveyEngine.setEmbeddedData('chatData', 'test123');
-                Qualtrics.SurveyEngine.setEmbeddedData('chatTestVar', 'hello');
-                console.log("[QUALTRICS QID: " + qid + "] TEST: Set chatData to 'test123' and chatTestVar to 'hello' before navigation.");
-
-                // Restore the original handler to prevent infinite loops when we programmatically click the button.
-                console.log("[QUALTRICS QID: " + qid + "] Restoring original Next button click handler.");
-                buttonToUse.onclick = originalOnClick;
-
-                // Method 1 (NEW PRIORITY): Try Qualtrics API via questionThis
-                if (questionThis && typeof questionThis.clickNextButton === 'function') {
+                // Force Qualtrics to commit any pending data operations
+                // Check if this is the last question in the survey
+                const isLastQuestion = (function() {
+                    // Method 1: Look for "Submit" text or translation equivalent on button
+                    if (buttonToUse && 
+                        (buttonToUse.value === "Submit" || 
+                         buttonToUse.innerText === "Submit" || 
+                         buttonToUse.getAttribute("alt") === "Submit")) {
+                        return true;
+                    }
+                    // Method 2: Check Qualtrics internal API if available
+                    if (typeof Qualtrics !== 'undefined' && 
+                        typeof Qualtrics.SurveyEngine !== 'undefined' && 
+                        typeof Qualtrics.SurveyEngine.getInstance === 'function') {
+                        var instance = Qualtrics.SurveyEngine.getInstance();
+                        if (instance && instance.isLastPage) {
+                            return instance.isLastPage();
+                        }
+                    }
+                    // Method 3: Try to detect via URL or other means
+                    if (window.location.href.indexOf("LastPage=1") > -1) {
+                        return true;
+                    }
+                    return false;
+                })();
+            
+            console.log("[QUALTRICS QID: " + qid + "] Is this the final question? " + isLastQuestion);
+            
+            if (isLastQuestion) {
+                console.log("[QUALTRICS QID: " + qid + "] This appears to be the FINAL QUESTION. Using special submission handling.");
+            }
+            
+            setTimeout(function() {
+                console.log("[QUALTRICS QID: " + qid + "] Executing delayed navigation to next page.");
+                console.log("[QUALTRICS QID: " + qid + "] Attempting to force data commit before navigation...");
+                
+                try {
+                    // Final attempt to ensure our data is saved
+                    if (window.lastReceivedChatData) {
+                        console.log("[QUALTRICS QID: " + qid + "] Final check: Setting embedded data from window.lastReceivedChatData");
+                        
+                        // Multiple approaches to force data persistence
+                        Qualtrics.SurveyEngine.setEmbeddedData('chatData', window.lastReceivedChatData);
+                        
+                        if (typeof Qualtrics !== 'undefined' && 
+                            typeof Qualtrics.SurveyEngine !== 'undefined' && 
+                            typeof Qualtrics.SurveyEngine.registry !== 'undefined' && 
+                            typeof Qualtrics.SurveyEngine.registry.qobj !== 'undefined' && 
+                            typeof Qualtrics.SurveyEngine.registry.qobj.setEDValue === 'function') {
+                            Qualtrics.SurveyEngine.registry.qobj.setEDValue('chatData', window.lastReceivedChatData);
+                        }
+                        
+                        // Force flush any pending changes
+                        if (typeof Qualtrics.SurveyEngine.registry !== 'undefined' && 
+                            typeof Qualtrics.SurveyEngine.registry.save === 'function') {
+                            console.log("[QUALTRICS QID: " + qid + "] Calling Qualtrics.SurveyEngine.registry.save()");
+                            Qualtrics.SurveyEngine.registry.save();
+                        }
+                    }
+                    
+                    // Verify data was actually saved and saved to hidden field
+                    if (isLastQuestion) {
+                        const chatDataField = document.querySelector('#QR\\~' + qid + '\\~chatData, input[name="QR~' + qid + '~chatData"]');
+                        if (chatDataField) {
+                            console.log("[QUALTRICS QID: " + qid + "] FINAL CHECK: Hidden field exists with value length: " + chatDataField.value.length);
+                        } else {
+                            console.warn("[QUALTRICS QID: " + qid + "] FINAL CHECK: Hidden field not found, creating one last attempt...");
+                            createHiddenQuestionField(qid, 'chatData', window.lastReceivedChatData || 
+                                                     (window.sessionStorage ? window.sessionStorage.getItem('qualtricsLastChatData') : ''));
+                        }
+                        
+                        // Get the form element that contains the hidden fields
+                        var form = document.querySelector('form#Page');
+                        if (form) {
+                            // Force a form submit directly
+                            console.log("[QUALTRICS QID: " + qid + "] FINAL SUBMIT: Forcing form submission directly.");
+                            form.submit();
+                            return; // Skip other navigation methods
+                        }
+                    }
+                } catch (e) {
+                    console.error("[QUALTRICS QID: " + qid + "] Error in final question handling:", e);
+                }
+                
+                // Restore original click handler temporarily to prevent infinite loops
+                if (buttonToUse) {
+                    buttonToUse.onclick = null;
+                    console.log("[QUALTRICS QID: " + qid + "] Restoring original Next button click handler.");
+                }
+                
+                // Method 1: Try to use the question context to navigate properly
+                if (typeof questionThis === 'object' && 
+                    typeof questionThis.clickNextButton === 'function') {
                     console.log("[QUALTRICS QID: " + qid + "] Using questionThis.clickNextButton()");
                     questionThis.clickNextButton();
                 }
-                // Method 2: Use jQuery to trigger a click on the Next button directly
+                // Method 2: Try to use Qualtrics's native form submission method
+                else if (typeof Qualtrics !== 'undefined' && 
+                    typeof Qualtrics.SurveyEngine !== 'undefined' && 
+                    typeof Qualtrics.SurveyEngine.navBtn !== 'undefined' && 
+                    typeof Qualtrics.SurveyEngine.navBtn.submitForm === 'function') {
+                    console.log("[QUALTRICS QID: " + qid + "] Using Qualtrics.SurveyEngine.navBtn.submitForm() for proper form submission");
+                    // This is expected to properly submit the form, committing all data
+                    Qualtrics.SurveyEngine.navBtn.submitForm();
+                }
+                // Method 3: Use jQuery to trigger a click on the Next button directly
                 else if (typeof jQuery !== 'undefined') {
                     console.log("[QUALTRICS QID: " + qid + "] Using jQuery to click Next button");
                     jQuery("#NextButton").click();
                 } 
-                // Method 3: If jQuery not available, directly click the button
+                // Method 4: If jQuery not available, directly click the button
                 else if (buttonToUse && typeof buttonToUse.click === 'function') {
                     console.log("[QUALTRICS QID: " + qid + "] Directly clicking Next button");
                     buttonToUse.click();
                 }
-                // Method 4: Last resort, try a different Qualtrics API
+                // Method 5: Last resort, try a different Qualtrics API
                 else {
                     console.log("[QUALTRICS QID: " + qid + "] All standard methods failed, trying to find any available navigation method");
                     if (typeof Qualtrics !== 'undefined' && Qualtrics.SurveyEngine && 
@@ -397,7 +694,7 @@ Qualtrics.SurveyEngine.addOnReady(function() {
                         alert("Please click Next manually to continue.");
                     }
                 }
-            }, 500); // Reduced delay to 500ms for reliability
+            }, 1000); // Increased delay to 1000ms for final page reliability
 
         };
         console.log("[QUALTRICS QID: " + qid + "] 'onclick' handler ASSIGNED to Next button (found " + foundLocation + ") with delayed navigation.");
@@ -405,22 +702,23 @@ Qualtrics.SurveyEngine.addOnReady(function() {
 });
 
 // --- Save data on page unload as an extra precaution ---
-Qualtrics.SurveyEngine.addOnUnload(function() {
-    var qid = this.questionId;
-    console.log("[QUALTRICS QID: " + qid + "] addOnUnload triggered. Attempting final data save.");
-    
-    // Try to save the data from our backup sources if possible
-    try {
-        if (window.lastReceivedChatData) {
-            console.log("[QUALTRICS QID: " + qid + "] Setting embedded data from window.lastReceivedChatData on unload");
-            Qualtrics.SurveyEngine.setEmbeddedData('chatData', window.lastReceivedChatData);
-        } else if (window.sessionStorage && window.sessionStorage.getItem('qualtricsLastChatData')) {
-            console.log("[QUALTRICS QID: " + qid + "] Setting embedded data from sessionStorage on unload");
-            Qualtrics.SurveyEngine.setEmbeddedData('chatData', window.sessionStorage.getItem('qualtricsLastChatData'));
-        } else {
-            console.log("[QUALTRICS QID: " + qid + "] No backup data found to set on unload");
-        }
-    } catch (e) {
-        console.error("[QUALTRICS QID: " + qid + "] Error setting embedded data on unload:", e);
-    }
-});
+// Commented out until needed - can be enabled for additional safety
+// Qualtrics.SurveyEngine.addOnUnload(function() {
+//     var qid = this.questionId;
+//     console.log("[QUALTRICS QID: " + qid + "] addOnUnload triggered. Attempting final data save.");
+//     
+//     // Try to save the data from our backup sources if possible
+//     try {
+//         if (window.lastReceivedChatData) {
+//             console.log("[QUALTRICS QID: " + qid + "] Setting embedded data from window.lastReceivedChatData on unload");
+//             Qualtrics.SurveyEngine.setEmbeddedData('chatData', window.lastReceivedChatData);
+//         } else if (window.sessionStorage && window.sessionStorage.getItem('qualtricsLastChatData')) {
+//             console.log("[QUALTRICS QID: " + qid + "] Setting embedded data from sessionStorage on unload");
+//             Qualtrics.SurveyEngine.setEmbeddedData('chatData', window.sessionStorage.getItem('qualtricsLastChatData'));
+//         } else {
+//             console.log("[QUALTRICS QID: " + qid + "] No backup data found to set on unload");
+//         }
+//     } catch (e) {
+//         console.error("[QUALTRICS QID: " + qid + "] Error setting embedded data on unload:", e);
+//     }
+// });
